@@ -59,7 +59,7 @@ if _raw_keys:
     YOUTUBE_API_KEYS: List[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
 else:
     # Backward compatible: single-key env var (or the old hardcoded default).
-    YOUTUBE_API_KEYS = [os.environ.get("YOUTUBE_API_KEY", "AIzaSyAuWd41xKkkd0HDq87dK9jHffW6lKzKWJs")]
+    YOUTUBE_API_KEYS = [os.environ.get("YOUTUBE_API_KEY", "AIzaSyAuWd41xKkkd0HDq87dK9jHffW6lKzKWJs, AIzaSyBT9ffbKLBhRQDr8WWt3IH4FcXqenFjoO0")]
 YOUTUBE_V3_BASE_URL = "https://www.googleapis.com/youtube/v3"
 
 
