@@ -1325,6 +1325,7 @@ async def _youtube_v3_search(query: str, limit: int = 1) -> List[Dict]:
     once ALL keys are exhausted (or missing) does it shift to
     _ytdlp_search_fallback() — so search never just stops working. Callers
     don't need to know or care which key/backend actually served the result."""
+    global _current_key_idx
     if not query or not query.strip():
         return []
 
