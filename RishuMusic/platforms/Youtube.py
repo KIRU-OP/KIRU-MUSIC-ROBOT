@@ -62,6 +62,19 @@ else:
     YOUTUBE_API_KEYS = [os.environ.get("YOUTUBE_API_KEY", "AIzaSyAuWd41xKkkd0HDq87dK9jHffW6lKzKWJs")]
 YOUTUBE_V3_BASE_URL = "https://www.googleapis.com/youtube/v3"
 
+
+def _mask_key(key: Optional[str]) -> str:
+    """Never print the full API key to logs — only enough to tell keys apart.
+    Defined up here (rather than further down, where it originally lived)
+    because load_apis() below can run synchronously at import time — before
+    later module-level definitions would otherwise exist — and now calls
+    this for its startup log line."""
+    if not key:
+        return "<empty>"
+    if len(key) <= 8:
+        return "***"
+    return f"{key[:4]}...{key[-4:]} (len={len(key)})"
+
 # Per-key quota-exhaustion cooldown (epoch seconds; each key resets independently
 # at midnight Pacific) + a round-robin pointer into YOUTUBE_API_KEYS.
 _key_exhausted_until: Dict[str, float] = {}
@@ -326,6 +339,14 @@ async def load_apis():
     """Load and verify APIs - only checks non-empty URLs."""
     global PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED
     logger = LOGGER("VISHALMUSIC.platforms.Youtube.py")
+
+    # Log key-pool size on startup so "search stopped working" is easy to
+    # diagnose from logs alone (e.g. only 1 key configured -> quota runs out
+    # fast; env var not read at all -> falls back to the hardcoded default).
+    logger.info(
+        f"[INFO] YouTube Data API v3 key pool: {len(YOUTUBE_API_KEYS)} key(s) configured "
+        f"({', '.join(_mask_key(k) for k in YOUTUBE_API_KEYS)})"
+    )
 
     if PRIMARY_API_URL:
         try:
@@ -747,7 +768,10 @@ async def download_audio_ytdlp(link: str) -> str:
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.webm")
 
-    if os.path.exists(file_path):
+    # BUG FIX: this cache check had no size guard (unlike every other cache
+    # check in the file), so a corrupt/empty leftover file from a previous
+    # failed download would be returned as a "successful" result forever.
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 10240:
         return file_path
 
     await _check_rate_limit_async()
@@ -1029,15 +1053,6 @@ def _iso8601_duration_to_str(iso: Optional[str]) -> Optional[str]:
     return f"{minutes}:{seconds:02d}"
 
 
-def _mask_key(key: Optional[str]) -> str:
-    """Never print the full API key to logs — only enough to tell keys apart."""
-    if not key:
-        return "<empty>"
-    if len(key) <= 8:
-        return "***"
-    return f"{key[:4]}...{key[-4:]} (len={len(key)})"
-
-
 def _log_v3_error_body(context: str, status: int, body: str, key: Optional[str] = None) -> Optional[str]:
     """
     Parses the standard Google API error JSON and logs the REAL reason
@@ -1239,39 +1254,58 @@ async def _ytdlp_search_fallback(query: str, limit: int = 1) -> List[Dict]:
 
 
 async def _youtube_v3_video_durations(video_ids: List[str]) -> Dict[str, Optional[str]]:
-    """Batch-fetch contentDetails.duration for up to 50 video IDs in one call."""
+    """Batch-fetch contentDetails.duration for up to 50 video IDs in one call.
+
+    BUG FIX: this used to try exactly one key and give up on ANY failure
+    (invalid key, transient error, etc.) without ever trying the rest of the
+    key pool — unlike _youtube_v3_search, which does rotate. It now rotates
+    through every configured key the same way search does, so a single bad
+    key here no longer silently kills durations for every search result."""
     if not video_ids:
         return {}
-    api_key = await _get_active_api_key()
-    if not api_key:
-        _module_logger.error("❌ YouTube V3 videos.list skipped: no non-exhausted API key available.")
-        return {}
     session = await _get_yt_session()
-    try:
-        async with session.get(
-            f"{YOUTUBE_V3_BASE_URL}/videos",
-            params={
-                "part": "contentDetails",
-                "id": ",".join(video_ids[:50]),
-                "key": api_key,
-            },
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as response:
-            if response.status != 200:
-                body = await response.text()
-                reason = _log_v3_error_body("videos.list", response.status, body, key=api_key)
-                if reason == "quotaExceeded":
-                    await _mark_key_quota_exceeded(api_key)
-                return {}
-            data = await response.json()
-    except asyncio.TimeoutError:
-        _module_logger.error("❌ YouTube V3 videos.list error: request timed out after 10s.")
-        return {}
-    except aiohttp.ClientError as e:
-        _module_logger.error(f"❌ YouTube V3 videos.list network error: {type(e).__name__}: {e}")
-        return {}
-    except Exception as e:
-        _module_logger.error(f"❌ YouTube V3 videos.list unexpected error: {type(e).__name__}: {e}")
+    global _current_key_idx
+
+    for attempt in range(max(len(YOUTUBE_API_KEYS), 1)):
+        api_key = await _get_active_api_key()
+        if not api_key:
+            _module_logger.error("❌ YouTube V3 videos.list skipped: no non-exhausted API key available.")
+            return {}
+        try:
+            async with session.get(
+                f"{YOUTUBE_V3_BASE_URL}/videos",
+                params={
+                    "part": "contentDetails",
+                    "id": ",".join(video_ids[:50]),
+                    "key": api_key,
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    reason = _log_v3_error_body("videos.list", response.status, body, key=api_key)
+                    if reason == "quotaExceeded":
+                        await _mark_key_quota_exceeded(api_key)
+                    else:
+                        async with _key_rotation_lock:
+                            _current_key_idx = (_current_key_idx + 1) % len(YOUTUBE_API_KEYS)
+                        _module_logger.warning(
+                            f"↩️ Key {_mask_key(api_key)} failed on videos.list (reason={reason}) — trying next key."
+                        )
+                    continue
+                data = await response.json()
+                break
+        except asyncio.TimeoutError:
+            _module_logger.error("❌ YouTube V3 videos.list error: request timed out after 10s.")
+            return {}
+        except aiohttp.ClientError as e:
+            _module_logger.error(f"❌ YouTube V3 videos.list network error: {type(e).__name__}: {e}")
+            return {}
+        except Exception as e:
+            _module_logger.error(f"❌ YouTube V3 videos.list unexpected error: {type(e).__name__}: {e}")
+            return {}
+    else:
+        _module_logger.warning("↩️ All keys failed on videos.list — returning no durations for this batch.")
         return {}
 
     out: Dict[str, Optional[str]] = {}
@@ -1336,9 +1370,20 @@ async def _youtube_v3_search(query: str, limit: int = 1) -> List[Dict]:
                     reason = _log_v3_error_body("search.search", response.status, body, key=api_key)
                     if reason == "quotaExceeded":
                         await _mark_key_quota_exceeded(api_key)
-                        continue  # try the next key in the pool right away
-                    _module_logger.warning(f"↩️ Shifting to yt-dlp search fallback for q={query!r}")
-                    return await _ytdlp_search_fallback(query, limit)
+                    else:
+                        # BUG FIX: previously any non-quota error (invalid key,
+                        # accessNotConfigured, a transient 5xx from Google,
+                        # etc.) gave up on the ENTIRE key pool immediately and
+                        # fell back to yt-dlp — even if other configured keys
+                        # were perfectly fine. Now we just rotate past this
+                        # one bad key and keep trying the rest of the pool.
+                        async with _key_rotation_lock:
+                            _current_key_idx = (_current_key_idx + 1) % len(YOUTUBE_API_KEYS)
+                        _module_logger.warning(
+                            f"↩️ Key {_mask_key(api_key)} failed (reason={reason}) — "
+                            f"trying next key in the pool instead of giving up."
+                        )
+                    continue  # try the next key in the pool right away
                 data = await response.json()
                 break
         except asyncio.TimeoutError:
@@ -1351,8 +1396,8 @@ async def _youtube_v3_search(query: str, limit: int = 1) -> List[Dict]:
             _module_logger.error(f"❌ YouTube V3 search unexpected error: {type(e).__name__}: {e} | q={query!r}")
             return await _ytdlp_search_fallback(query, limit)
     else:
-        # Every key in the pool returned quotaExceeded during this loop.
-        _module_logger.warning(f"↩️ All keys exhausted mid-loop — shifting to yt-dlp search fallback for q={query!r}")
+        # Every key in the pool failed during this loop (quota or otherwise).
+        _module_logger.warning(f"↩️ All keys failed — shifting to yt-dlp search fallback for q={query!r}")
         return await _ytdlp_search_fallback(query, limit)
 
     items = data.get("items", [])
