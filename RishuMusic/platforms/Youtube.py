@@ -54,7 +54,7 @@ SHRUTI_API_KEY = "ShrutiBotsPAVXJFsXdDeoJqDOe4NW"
 # key the moment one hits quotaExceeded, so effective daily quota becomes
 # 10,000 × number of keys. Only once EVERY key is exhausted does it fall
 # back to the quota-free yt-dlp search (see _ytdlp_search_fallback below).
-_raw_keys = os.environ.get("YOUTUBE_API_KEYS", "AIzaSyB-rnjVcLdbyvTcgVbEKPtXRZj1RO-Tgi8").strip()
+_raw_keys = os.environ.get("YOUTUBE_API_KEYS", "AIzaSyCDpYRd4S4xBboTyfVZ1rYsDtgnHmOlqIA").strip()
 if _raw_keys:
     YOUTUBE_API_KEYS: List[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
 else:
