@@ -24,7 +24,6 @@ from py_yt import VideosSearch
 
 from RishuMusic.utils.cookie_handler import COOKIE_PATH
 from RishuMusic.utils.database import is_on_off
-from RishuMusic.utils.downloader import download_audio_concurrent, yt_dlp_download
 from RishuMusic.utils.errors import capture_internal_err
 from RishuMusic.utils.formatters import time_to_seconds
 from RishuMusic.utils.tuning import (
@@ -57,6 +56,217 @@ FALLBACK_API_URL = "http://13.212.126.0:2020"
 # API URLs loaded status
 PRIMARY_API_LOADED = False
 FALLBACK_API_LOADED = False
+
+
+async def vishal_audio_stream_url(link: str) -> Optional[str]:
+    """Build the Vishal primary-API audio URL and confirm it's actually
+    serving content — WITHOUT downloading or saving anything to disk.
+    Returns the URL itself (the player streams directly from it) or None
+    if Vishal API isn't configured/reachable for this video."""
+    if not PRIMARY_API_URL:
+        return None
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+
+    stream_url = f"{PRIMARY_API_URL}/download?url={video_id}&type=audio&api_key={VISHAL_API_KEY}"
+    try:
+        session = await _get_yt_session()
+        # Only ask for the first byte so we confirm it's live without pulling the whole file
+        headers = {"Range": "bytes=0-0"}
+        async with session.get(
+            stream_url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)
+        ) as response:
+            if response.status in (200, 206):
+                return stream_url
+    except Exception:
+        pass
+    return None
+
+# ============ YOUTUBE DATA API v3 - KEY ROTATION ============
+# Add as many keys as you have. Each key is used for up to
+# _MAX_REQUESTS_PER_KEY requests, then the rotator automatically shifts
+# to the next key in the list (and wraps back to the first once it has
+# gone through all of them).
+YOUTUBE_V3_API_KEYS: List[str] = [
+    # "AIzaSy...KEY_1",
+    # "AIzaSy...KEY_2",
+    # "AIzaSy...KEY_3",
+]
+YOUTUBE_V3_BASE_URL = "https://www.googleapis.com/youtube/v3"
+
+
+class YTV3KeyRotator:
+    """Round-robin rotator for YouTube Data API v3 keys.
+
+    Every successful request against a key is counted. Once a key crosses
+    `max_requests_per_key` (default 10,000) the rotator moves on to the
+    next key automatically. If the API itself reports the key's quota is
+    exhausted (HTTP 403 / quotaExceeded), the rotator shifts immediately
+    instead of waiting for the counter to reach the limit.
+    """
+
+    def __init__(self, keys: List[str], max_requests_per_key: int = 10000):
+        self.keys = [k.strip() for k in keys if k and k.strip()]
+        self.max_requests_per_key = max_requests_per_key
+        self._idx = 0
+        self._used = 0
+        self._lock = asyncio.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.keys)
+
+    async def current_key(self) -> Optional[str]:
+        async with self._lock:
+            if not self.keys:
+                return None
+            return self.keys[self._idx]
+
+    async def mark_used(self) -> None:
+        """Call once per successful request made with the current key."""
+        async with self._lock:
+            if not self.keys:
+                return
+            self._used += 1
+            if self._used >= self.max_requests_per_key:
+                self._rotate_locked("quota counter reached")
+
+    async def force_rotate(self) -> None:
+        """Call when the API reports the current key's quota is exhausted."""
+        async with self._lock:
+            if self.keys:
+                self._rotate_locked("quotaExceeded from API")
+
+    def _rotate_locked(self, reason: str) -> None:
+        old_idx = self._idx
+        self._used = 0
+        self._idx = (self._idx + 1) % len(self.keys)
+        _module_logger.info(
+            f"🔄 YouTube v3 key rotated ({reason}): key #{old_idx + 1} -> #{self._idx + 1} of {len(self.keys)}"
+        )
+
+
+_yt_v3_rotator = YTV3KeyRotator(YOUTUBE_V3_API_KEYS, max_requests_per_key=10000)
+
+
+async def _yt_v3_request(endpoint: str, params: Dict) -> Optional[Dict]:
+    """GET a YouTube Data API v3 endpoint using the rotating key pool.
+
+    Returns the parsed JSON on success, or None if v3 isn't configured or
+    every key failed. Automatically rotates keys on quota errors and retries
+    with the next key before giving up.
+    """
+    if not _yt_v3_rotator.enabled:
+        return None
+
+    attempts = len(_yt_v3_rotator.keys)
+    session = await _get_yt_session()
+
+    for _ in range(attempts):
+        key = await _yt_v3_rotator.current_key()
+        if not key:
+            return None
+        req_params = {**params, "key": key}
+        try:
+            async with session.get(
+                f"{YOUTUBE_V3_BASE_URL}/{endpoint}",
+                params=req_params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    await _yt_v3_rotator.mark_used()
+                    return data
+
+                body_text = ""
+                with contextlib.suppress(Exception):
+                    body_text = await response.text()
+
+                if response.status in (403, 400) and (
+                    "quotaExceeded" in body_text or "quota" in body_text.lower()
+                ):
+                    await _yt_v3_rotator.force_rotate()
+                    continue  # retry immediately with the next key
+
+                return None
+        except Exception:
+            continue
+
+    return None
+
+
+_ISO8601_DURATION_RE = re.compile(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?")
+
+
+def _iso8601_duration_to_str(duration: str) -> Optional[str]:
+    """Convert e.g. 'PT3M45S' -> '3:45' (or 'H:MM:SS' for longer videos)."""
+    if not duration:
+        return None
+    m = _ISO8601_DURATION_RE.match(duration)
+    if not m:
+        return None
+    h, mnt, s = (int(x) if x else 0 for x in m.groups())
+    total = h * 3600 + mnt * 60 + s
+    if total <= 0:
+        return None
+    hrs, rem = divmod(total, 3600)
+    mins, secs = divmod(rem, 60)
+    return f"{hrs}:{mins:02d}:{secs:02d}" if hrs else f"{mins}:{secs:02d}"
+
+
+_VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/|shorts/|live/)([A-Za-z0-9_-]{11})")
+
+
+async def _fetch_video_info_v3(query: str) -> Optional[Dict]:
+    """Resolve a YouTube URL/query to metadata using Data API v3 (rotating keys).
+    Returns a dict shaped like py_yt's result so it's a drop-in replacement,
+    or None if v3 isn't configured / the lookup failed (caller should fall
+    back to py_yt / yt-dlp in that case)."""
+    if not _yt_v3_rotator.enabled:
+        return None
+
+    video_id = None
+    if query.startswith("http"):
+        m = _VIDEO_ID_RE.search(query)
+        video_id = m.group(1) if m else None
+
+    if not video_id:
+        data = await _yt_v3_request(
+            "search", {"part": "snippet", "q": query, "type": "video", "maxResults": 1}
+        )
+        items = (data or {}).get("items") or []
+        if not items:
+            return None
+        video_id = items[0].get("id", {}).get("videoId")
+        if not video_id:
+            return None
+
+    data = await _yt_v3_request("videos", {"part": "snippet,contentDetails", "id": video_id})
+    items = (data or {}).get("items") or []
+    if not items:
+        return None
+
+    item = items[0]
+    snippet = item.get("snippet", {}) or {}
+    content = item.get("contentDetails", {}) or {}
+    duration_str = _iso8601_duration_to_str(content.get("duration", ""))
+    thumbs = snippet.get("thumbnails", {}) or {}
+    thumb_url = (
+        thumbs.get("maxres", {}).get("url")
+        or thumbs.get("high", {}).get("url")
+        or thumbs.get("medium", {}).get("url")
+        or thumbs.get("default", {}).get("url")
+        or ""
+    )
+    return {
+        "title": snippet.get("title", ""),
+        "duration": duration_str,
+        "thumbnail": thumb_url,
+        "thumbnails": [{"url": thumb_url}],
+        "id": video_id,
+    }
+
 
 # ============ RATE LIMITING (async â€” does NOT block the event loop) ============
 _request_timestamps = []
@@ -624,6 +834,13 @@ class YouTubeAPI:
     @capture_internal_err
     async def _fetch_video_info(self, query: str, *, use_cache: bool = True) -> Optional[Dict]:
         q = self._prepare_link(query)
+
+        # 1. YouTube Data API v3 first (rotates across YOUTUBE_V3_API_KEYS)
+        v3_info = await _fetch_video_info_v3(q)
+        if v3_info:
+            return v3_info
+
+        # 2. Fallback: py_yt scraping (no official API needed)
         if use_cache and not q.startswith("http"):
             res = await cached_youtube_search(q)
             return res[0] if res else None
@@ -718,6 +935,54 @@ class YouTubeAPI:
                     return (1, stream_url)
             await asyncio.sleep(1)
         return (0, "All format attempts failed")
+
+    @capture_internal_err
+    async def audio(self, link: str, videoid: Union[str, bool, None] = None) -> Tuple[int, str]:
+        """Direct audio stream URL — this NEVER downloads a file to disk.
+        Tries the Vishal API as a direct stream source first, then falls
+        back to a yt-dlp-extracted googlevideo stream URL."""
+        link = self._prepare_link(link, videoid)
+
+        # 1. Vishal API — stream straight from it, nothing saved to disk
+        vishal_url = await vishal_audio_stream_url(link)
+        if vishal_url:
+            _module_logger.info("✅ Audio stream (Vishal API)")
+            return (1, vishal_url)
+
+        # 2. yt-dlp — extract a direct googlevideo stream URL
+        await _check_rate_limit_async()
+
+        ytdlp_args = [
+            "yt-dlp", *(_cookies_args()), "--no-warnings", "--geo-bypass", "--force-ipv4",
+            "-g", "-f", "bestaudio/best", link,
+        ]
+        stdout, stderr = await _exec_proc(*ytdlp_args)
+
+        if stdout:
+            stream_url = stdout.decode().split("\n")[0]
+            if stream_url and stream_url.startswith("http"):
+                return (1, stream_url)
+            return (0, "Invalid stream URL")
+
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        if "429" in error_msg or "Too Many Requests" in error_msg:
+            await asyncio.sleep(30)
+            return (0, "Rate limited")
+        elif "403" in error_msg:
+            return await self._try_alternative_audio_format(link)
+        else:
+            return (0, error_msg)
+
+    async def _try_alternative_audio_format(self, link: str) -> Tuple[int, str]:
+        format_options = ["bestaudio[ext=m4a]", "bestaudio[ext=webm]", "bestaudio", "worstaudio", "best"]
+        for fmt in format_options:
+            stdout, stderr = await _exec_proc("yt-dlp", *(_cookies_args()), "--no-warnings", "-g", "-f", fmt, link)
+            if stdout:
+                stream_url = stdout.decode().split("\n")[0]
+                if stream_url and stream_url.startswith("http"):
+                    return (1, stream_url)
+            await asyncio.sleep(1)
+        return (0, "All audio format attempts failed")
 
     @capture_internal_err
     async def playlist(self, link: str, limit: int, user_id, videoid: Union[str, bool, None] = None) -> List[str]:
@@ -871,47 +1136,13 @@ class YouTubeAPI:
                 return None, None
 
         else:
-            # ── LIGHTNING FAST: Race all download methods concurrently ──
-            async def _try_primary():
-                return await download_audio(link)
+            # ── MUSIC: STREAM ONLY, NEVER DOWNLOAD TO DISK ──
+            status, stream_url = await self.audio(link)
+            if status == 1:
+                _module_logger.info("✅ Audio stream")
+                return stream_url, None
 
-            async def _try_ytdlp():
-                return await yt_dlp_download(link, type="audio")
-
-            async def _try_concurrent():
-                return await download_audio_concurrent(link)
-
-            # Race: first successful result wins
-            tasks = [
-                asyncio.create_task(_try_primary()),
-                asyncio.create_task(_try_ytdlp()),
-                asyncio.create_task(_try_concurrent()),
-            ]
-
-            audio_result = None
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    result = await coro
-                    if result and os.path.exists(result) and os.path.getsize(result) > 10240:
-                        audio_result = result
-                        # Cancel remaining tasks
-                        for t in tasks:
-                            t.cancel()
-                        break
-                except Exception:
-                    continue
-
-            if audio_result:
-                _module_logger.info("✅ Audio downloaded (race winner)")
-                if audio_result != common_file_path:
-                    try:
-                        shutil.move(audio_result, common_file_path)
-                        return common_file_path, True
-                    except Exception:
-                        return audio_result, True
-                return audio_result, True
-
-            _module_logger.info("❌ All audio download methods failed")
+            _module_logger.info("❌ Audio stream failed")
             return None, None
 
 YouTube = YouTubeAPI()
