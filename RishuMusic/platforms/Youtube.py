@@ -22,17 +22,17 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from py_yt import VideosSearch
 
-from VISHALMUSIC.utils.cookie_handler import COOKIE_PATH
-from VISHALMUSIC.utils.database import is_on_off
-from VISHALMUSIC.utils.downloader import download_audio_concurrent, yt_dlp_download
-from VISHALMUSIC.utils.errors import capture_internal_err
-from VISHALMUSIC.utils.formatters import time_to_seconds
-from VISHALMUSIC.utils.tuning import (
+from RishuMusic.utils.cookie_handler import COOKIE_PATH
+from RishuMusic.utils.database import is_on_off
+from RishuMusic.utils.downloader import download_audio_concurrent, yt_dlp_download
+from RishuMusic.utils.errors import capture_internal_err
+from RishuMusic.utils.formatters import time_to_seconds
+from RishuMusic.utils.tuning import (
     YTDLP_TIMEOUT,
     YOUTUBE_META_MAX,
     YOUTUBE_META_TTL,
 )
-from VISHALMUSIC import LOGGER
+from RishuMusic import LOGGER
 
 _module_logger = LOGGER(__name__)
 
