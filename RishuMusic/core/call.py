@@ -332,18 +332,18 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ʌᴅᴅ ϻє вᴧʙʏ ✙",
+                                    "✙ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
                                 InlineKeyboardButton(
-                                    "⋞ ᴄʟᴏsє ⋟", callback_data="close_message"
+                                    "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
                                 ),
                             ]
                         ]
                     )
                     await app.send_message(
                         chat_id,
-                        "**🎵 𝐓ʜᴇ 𝐐ᴜᴇᴜᴇ 𝐇ᴀs 𝐅ɪɴɪsʜᴇᴅ. 𝐔sᴇ /play 𝐓ᴏ 𝐀ᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs!!**",
+                        "🎶 **𝐐ᴜᴇᴜᴇ 𝐄ɴᴅᴇᴅ!** 𝐒ᴇɴᴅ /play ᴛᴏ ᴀᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs ᴀɴᴅ ᴋᴇᴇᴘ ᴛʜᴇ ᴍᴜsɪᴄ ɢᴏɪɴɢ.",
                         reply_markup=buttons,
                     )
                 except:
@@ -357,18 +357,18 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ʌᴅᴅ ϻє вᴧʙʏ ✙",
+                                    "✙ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
                                 InlineKeyboardButton(
-                                    "⋞ ᴄʟᴏsє ⋟", callback_data="close_message"
+                                    "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
                                 ),
                             ]
                         ]
                     )
                     await app.send_message(
                         chat_id,
-                        "🎵 𝐓ʜᴇ 𝐐ᴜᴇᴜᴇ 𝐇ᴀs 𝐅ɪɴɪsʜᴇᴅ. 𝐔sᴇ /play 𝐓ᴏ 𝐀ᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs!!",
+                        "🎶 𝐐ᴜᴇᴜᴇ 𝐄ɴᴅᴇᴅ! 𝐒ᴇɴᴅ /play ᴛᴏ ᴀᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs ᴀɴᴅ ᴋᴇᴇᴘ ᴛʜᴇ ᴍᴜsɪᴄ ɢᴏɪɴɢ.",
                         reply_markup=buttons,
                     )
                 except:
