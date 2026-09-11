@@ -2,6 +2,9 @@ import os
 
 from ..logging import LOGGER
 
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
+CACHE_DIR = os.path.join(os.getcwd(), "cache")
+
 
 def dirr():
     for file in os.listdir():
