@@ -925,35 +925,23 @@ async def download_video(link: str) -> str:
 #   2. Append it to AUDIO_STREAM_SOURCES.
 # Nothing else in the file needs to change.
 
-async def _validate_stream_url(url: str, timeout: float = 8.0) -> Tuple[bool, str]:
+async def _validate_stream_url(url: str, timeout: float = 6.0) -> bool:
     """
     Quick liveness check for a candidate stream URL before handing it to the
-    player. Avoids relying on Range-header support (some APIs reject/ignore
-    it) — instead does a plain GET, confirms a real success status, and reads
-    a small chunk to make sure data is actually flowing before closing the
-    connection early. Never downloads the full file here.
-
-    Returns (ok, reason) — reason is always populated so callers can log
-    *why* a source was rejected instead of a silent False.
+    player. Uses a tiny ranged GET (some CDNs ignore/block HEAD) so it never
+    downloads the actual file — it only confirms the endpoint is alive and
+    responds with a success status. Keeps the whole chain fast-failing so a
+    dead API doesn't stall playback.
     """
     try:
         session = await _get_yt_session()
+        headers = {"Range": "bytes=0-1"}
         async with session.get(
-            url, timeout=aiohttp.ClientTimeout(total=timeout)
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)
         ) as resp:
-            if resp.status not in (200, 206):
-                body_preview = ""
-                with contextlib.suppress(Exception):
-                    body_preview = (await resp.content.read(200)).decode(errors="replace")
-                return False, f"HTTP {resp.status}" + (f" body={body_preview!r}" if body_preview else "")
-            chunk = await resp.content.read(1024)
-            if not chunk:
-                return False, "HTTP 200 but empty body"
-            return True, "ok"
-    except asyncio.TimeoutError:
-        return False, f"timed out after {timeout}s"
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+            return resp.status in (200, 206)
+    except Exception:
+        return False
 
 
 async def _stream_url_ytdlp(link: str) -> Optional[str]:
@@ -982,7 +970,7 @@ async def _stream_url_primary_api(link: str) -> Optional[str]:
     """
     Primary Shruti API's own endpoint used directly as the stream URL — the
     player pulls straight from the API's CDN instead of us downloading first.
-    Only validated (small GET), never fully fetched here.
+    Only validated (ranged GET), never fully fetched here.
     """
     if not PRIMARY_API_URL:
         return None
@@ -990,11 +978,7 @@ async def _stream_url_primary_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{PRIMARY_API_URL}/download?url={video_id}&type=audio&api_key={SHRUTI_API_KEY}"
-    ok, reason = await _validate_stream_url(url)
-    if ok:
-        return url
-    _module_logger.info(f"   ↳ Primary API check failed for {video_id}: {reason}")
-    return None
+    return url if await _validate_stream_url(url) else None
 
 
 async def _stream_url_worker_api(link: str) -> Optional[str]:
@@ -1005,20 +989,16 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{WORKER_FALLBACK_API_URL}/download?url={video_id}&type=audio&key={WORKER_FALLBACK_API_KEY}"
-    ok, reason = await _validate_stream_url(url)
-    if ok:
-        return url
-    _module_logger.info(f"   ↳ Worker API check failed for {video_id}: {reason}")
-    return None
+    return url if await _validate_stream_url(url) else None
 
 
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
 # out of this chain — it requires a custom `X-Download-Token` header, which a
 # plain stream URL can't carry, so it can't be handed to a player as-is.
 AUDIO_STREAM_SOURCES = [
+    _stream_url_ytdlp,
     _stream_url_primary_api,
     _stream_url_worker_api,
-    _stream_url_ytdlp,
 ]
 
 
@@ -1037,7 +1017,6 @@ async def get_audio_stream_url(link: str) -> Optional[str]:
         if url:
             _module_logger.info(f"✅ Audio stream URL via {source.__name__}")
             return url
-        _module_logger.info(f"❌ Stream source '{source.__name__}' returned no URL")
     return None
 
 
