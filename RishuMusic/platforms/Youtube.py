@@ -89,9 +89,9 @@ async def vishal_audio_stream_url(link: str) -> Optional[str]:
 # to the next key in the list (and wraps back to the first once it has
 # gone through all of them).
 YOUTUBE_V3_API_KEYS: List[str] = [
-    # "AIzaSy...KEY_1",
-    # "AIzaSy...KEY_2",
-    # "AIzaSy...KEY_3",
+    "AIzaSyCDpYRd4S4xBboTyfVZ1rYsDtgnHmOlqIA",
+    "AIzaSyBT9ffbKLBhRQDr8WWt3IH4FcXqenFjoO0",
+    "AIzaSyB3Mf15uCZ3oqpWRRScj9jxDt0WUI0YYJc",
 ]
 YOUTUBE_V3_BASE_URL = "https://www.googleapis.com/youtube/v3"
 
