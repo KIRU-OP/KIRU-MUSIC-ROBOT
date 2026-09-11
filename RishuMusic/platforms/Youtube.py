@@ -996,9 +996,9 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
 # out of this chain — it requires a custom `X-Download-Token` header, which a
 # plain stream URL can't carry, so it can't be handed to a player as-is.
 AUDIO_STREAM_SOURCES = [
-    _stream_url_ytdlp,
     _stream_url_primary_api,
     _stream_url_worker_api,
+    _stream_url_ytdlp,
 ]
 
 
@@ -1017,6 +1017,7 @@ async def get_audio_stream_url(link: str) -> Optional[str]:
         if url:
             _module_logger.info(f"✅ Audio stream URL via {source.__name__}")
             return url
+        _module_logger.info(f"❌ Stream source '{source.__name__}' returned no URL")
     return None
 
 
