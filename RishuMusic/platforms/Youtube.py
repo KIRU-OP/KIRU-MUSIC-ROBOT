@@ -39,7 +39,7 @@ _formats_cache: Dict[str, Tuple[float, List[Dict], str]] = {}
 _formats_lock = asyncio.Lock()
 
 # ============ API CONFIGURATION ============
-SHRUTI_API_KEY = "ShrutiBotsPAVXJFsXdDeoJqDOe4NW"
+SHRUTI_API_KEY = "ShrutiBots4ECgHKlfLSzs9FLUNTdw"
 
 # YouTube Data API v3 (official) — used for all search/metadata lookups.
 # Replaces the old youtubesearchpython scraper, which broke silently whenever
