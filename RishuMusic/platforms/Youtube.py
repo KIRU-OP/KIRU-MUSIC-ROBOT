@@ -183,6 +183,13 @@ async def _yt_v3_request(endpoint: str, params: Dict) -> Optional[Dict]:
                 with contextlib.suppress(Exception):
                     body_text = await response.text()
 
+                # Log the real reason instead of failing silently.
+                masked_key = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else key
+                _module_logger.warning(
+                    f"⚠️ YouTube v3 [{endpoint}] failed — status {response.status}, "
+                    f"key {masked_key}: {body_text[:300]}"
+                )
+
                 if response.status in (403, 400) and (
                     "quotaExceeded" in body_text or "quota" in body_text.lower()
                 ):
@@ -190,7 +197,8 @@ async def _yt_v3_request(endpoint: str, params: Dict) -> Optional[Dict]:
                     continue  # retry immediately with the next key
 
                 return None
-        except Exception:
+        except Exception as e:
+            _module_logger.warning(f"⚠️ YouTube v3 [{endpoint}] request error: {e}")
             continue
 
     return None
