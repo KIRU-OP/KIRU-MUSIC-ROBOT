@@ -335,8 +335,15 @@ async def _get_yt_session() -> aiohttp.ClientSession:
         return _yt_session
 
 
+# Known-good, never-deleted video used purely as a startup health-check probe
+# for the download APIs — hitting "/" only proves the server is *up*, not
+# that its actual /download endpoint works, which is how PRIMARY_API_LOADED
+# could log [OK] while every real request still failed downstream.
+_HEALTHCHECK_VIDEO_ID = "dQw4w9WgXcQ"
+
+
 async def load_apis():
-    """Load and verify APIs - only checks non-empty URLs."""
+    """Load and verify APIs by probing their real /download endpoint, not just '/'."""
     global PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED
     logger = LOGGER("VISHALMUSIC.platforms.Youtube.py")
 
@@ -351,12 +358,19 @@ async def load_apis():
     if PRIMARY_API_URL:
         try:
             session = await _get_yt_session()
-            async with session.get(f"{PRIMARY_API_URL}/", timeout=aiohttp.ClientTimeout(total=8)) as response:
-                if response.status == 200:
+            probe = (f"{PRIMARY_API_URL}/download?url={_HEALTHCHECK_VIDEO_ID}"
+                     f"&type=audio&api_key={SHRUTI_API_KEY}")
+            headers = {"Range": "bytes=0-1"}
+            async with session.get(probe, headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status in (200, 206):
                     PRIMARY_API_LOADED = True
                     logger.info(f"[OK] PRIMARY API loaded: {PRIMARY_API_URL}")
                 else:
-                    logger.warning(f"[WARN] Primary API status {response.status}")
+                    logger.warning(
+                        f"[WARN] Primary API /download probe returned {response.status} "
+                        f"(server is up but stream endpoint isn't working)"
+                    )
         except Exception as e:
             logger.warning(f"[WARN] Primary API unreachable: {e}")
 
@@ -373,12 +387,18 @@ async def load_apis():
     if WORKER_FALLBACK_API_URL:
         try:
             session = await _get_yt_session()
-            async with session.get(f"{WORKER_FALLBACK_API_URL}/", timeout=aiohttp.ClientTimeout(total=8)) as response:
-                if response.status == 200:
+            probe = (f"{WORKER_FALLBACK_API_URL}/download?url={_HEALTHCHECK_VIDEO_ID}"
+                     f"&type=audio&key={WORKER_FALLBACK_API_KEY}")
+            headers = {"Range": "bytes=0-1"}
+            async with session.get(probe, headers=headers,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status in (200, 206):
                     WORKER_FALLBACK_API_LOADED = True
                     logger.info(f"[OK] WORKER FALLBACK API loaded: {WORKER_FALLBACK_API_URL}")
                 else:
-                    logger.warning(f"[WARN] Worker Fallback API status {response.status}")
+                    logger.warning(
+                        f"[WARN] Worker Fallback API /download probe returned {response.status}"
+                    )
         except Exception as e:
             logger.warning(f"[WARN] Worker Fallback API unreachable: {e}")
 
@@ -396,7 +416,19 @@ try:
 except RuntimeError:
     pass
 
+COOKIE_MAX_AGE_DAYS = int(os.environ.get("COOKIE_MAX_AGE_DAYS", 20))
+_cookie_stale_warned_at = 0.0
+_COOKIE_STALE_WARN_COOLDOWN_SEC = 1800  # don't spam logs — once per 30 min
+
+
 def _cookiefile_path() -> Optional[str]:
+    """
+    Returns the cookie file path only if it exists and is non-empty.
+    NOTE: this deliberately does NOT reject a stale (old but present) file —
+    an old cookie MIGHT still work, so we still hand it to yt-dlp and let
+    YouTube be the judge. See _warn_if_cookies_stale() for the age check,
+    which only logs a heads-up instead of blocking usage.
+    """
     path = str(COOKIE_PATH)
     try:
         if path and os.path.exists(path) and os.path.getsize(path) > 0:
@@ -404,6 +436,36 @@ def _cookiefile_path() -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def _warn_if_cookies_stale() -> None:
+    """
+    YouTube cookies silently rot after a few weeks and the failure mode
+    (bot-check on every stream) looks identical to "no cookies at all",
+    which makes it easy to burn hours debugging the wrong thing. This logs
+    a loud, rate-limited warning based on file age so the real cause is
+    visible in the logs before it turns into a support ticket.
+    """
+    global _cookie_stale_warned_at
+    path = _cookiefile_path()
+    if not path:
+        return
+    try:
+        age_days = (time.time() - os.path.getmtime(path)) / 86400
+    except OSError:
+        return
+    if age_days <= COOKIE_MAX_AGE_DAYS:
+        return
+    now = time.time()
+    if now - _cookie_stale_warned_at < _COOKIE_STALE_WARN_COOLDOWN_SEC:
+        return
+    _cookie_stale_warned_at = now
+    _module_logger.warning(
+        f"⚠️ Cookie file at {path} is {age_days:.1f} day(s) old "
+        f"(threshold: {COOKIE_MAX_AGE_DAYS}). YouTube cookies typically expire "
+        f"within a few weeks — if streams start failing with bot-check errors, "
+        f"re-export fresh cookies from a logged-in browser session."
+    )
 
 def _cookies_args() -> List[str]:
     p = _cookiefile_path()
@@ -945,23 +1007,45 @@ async def _validate_stream_url(url: str, timeout: float = 6.0) -> bool:
 
 
 async def _stream_url_ytdlp(link: str) -> Optional[str]:
-    """Direct googlevideo/CDN stream URL via `yt-dlp -g` — no file written."""
+    """
+    Direct googlevideo/CDN stream URL via `yt-dlp -g` — no file written.
+    Tries the configured client set first; if that hits the bot-check wall,
+    retries once with a different player_client combination before giving
+    up, since YouTube doesn't block every client equally at the same time.
+    """
     await _check_rate_limit_async()
-    ytdlp_args = [
-        "yt-dlp", *(_yt_dlp_cli_args()), "--no-warnings", "--geo-bypass", "--force-ipv4",
-        "-g", "-f", "bestaudio/best", link,
+    client_attempts = [
+        None,  # default: whatever _yt_dlp_cli_args() already sets (android,ios,web)
+        "tv_embedded,web_creator",  # frequently dodges bot-check when android/ios are blocked
     ]
-    stdout, stderr = await _exec_proc(*ytdlp_args)
-    if stdout:
-        url = stdout.decode().split("\n")[0].strip()
-        if url.startswith("http"):
-            return url
-    error_msg = stderr.decode() if stderr else ""
-    if _is_bot_check_error(error_msg):
+    last_error = ""
+    for clients in client_attempts:
+        base_args = _yt_dlp_cli_args()
+        if clients:
+            # Override the extractor-args entry with the alternate client list.
+            base_args = [a for a in base_args if a != "--extractor-args"
+                         and not a.startswith("youtube:player_client")]
+            base_args += ["--extractor-args", f"youtube:player_client={clients}"]
+        ytdlp_args = [
+            "yt-dlp", *base_args, "--no-warnings", "--geo-bypass", "--force-ipv4",
+            "-g", "-f", "bestaudio/best", link,
+        ]
+        stdout, stderr = await _exec_proc(*ytdlp_args)
+        if stdout:
+            url = stdout.decode().split("\n")[0].strip()
+            if url.startswith("http"):
+                return url
+        last_error = stderr.decode() if stderr else ""
+        if not _is_bot_check_error(last_error):
+            break  # non-bot-check failure (e.g. 429, network) — retrying clients won't help
+        await asyncio.sleep(0.5)
+
+    if _is_bot_check_error(last_error):
         _module_logger.info(
             "❌ Stream (yt-dlp): YouTube bot-check triggered — cookies missing/expired."
         )
-    elif "429" in error_msg or "Too Many Requests" in error_msg:
+        _warn_if_cookies_stale()
+    elif "429" in last_error or "Too Many Requests" in last_error:
         _module_logger.info("❌ Stream (yt-dlp): rate limited (429).")
     return None
 
@@ -992,6 +1076,47 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
     return url if await _validate_stream_url(url) else None
 
 
+# Public Invidious instances as a last-resort fallback. Invidious proxies
+# YouTube's own CDN and doesn't require cookies, so it keeps working even
+# when yt-dlp gets bot-checked and both custom APIs are down. Instances are
+# volunteer-run and go offline often, so several are listed and the first
+# one that returns a live audio URL wins. Override via env var if you run
+# your own instance.
+_INVIDIOUS_INSTANCES = [
+    i.strip() for i in os.environ.get(
+        "INVIDIOUS_INSTANCES",
+        "https://inv.nadeko.net,https://yewtu.be,https://invidious.jing.rocks"
+    ).split(",") if i.strip()
+]
+
+
+async def _stream_url_invidious(link: str) -> Optional[str]:
+    """Last-resort fallback: pull a direct audio URL from a public Invidious instance."""
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+    session = await _get_yt_session()
+    for instance in _INVIDIOUS_INSTANCES:
+        try:
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json()
+        except Exception:
+            continue
+        audio_formats = data.get("adaptiveFormats", []) if isinstance(data, dict) else []
+        audio_only = [f for f in audio_formats if str(f.get("type", "")).startswith("audio/")]
+        if not audio_only:
+            continue
+        # Prefer highest bitrate audio-only stream.
+        audio_only.sort(key=lambda f: int(f.get("bitrate", 0) or 0), reverse=True)
+        candidate = audio_only[0].get("url")
+        if candidate and await _validate_stream_url(candidate):
+            return candidate
+    return None
+
+
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
 # out of this chain — it requires a custom `X-Download-Token` header, which a
 # plain stream URL can't carry, so it can't be handed to a player as-is.
@@ -999,6 +1124,7 @@ AUDIO_STREAM_SOURCES = [
     _stream_url_ytdlp,
     _stream_url_primary_api,
     _stream_url_worker_api,
+    _stream_url_invidious,
 ]
 
 
