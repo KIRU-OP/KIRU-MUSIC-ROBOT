@@ -332,20 +332,18 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ ✙",
+                                    "✙ ʌᴅᴅ ϻє вᴧʙʏ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
-                            ],
-                            [
                                 InlineKeyboardButton(
-                                    "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
+                                    "⋞ ᴄʟᴏsє ⋟", callback_data="close_message"
                                 ),
-                            ],
+                            ]
                         ]
                     )
                     await app.send_message(
                         chat_id,
-                        "🎶 **𝐐ᴜᴇᴜᴇ 𝐄ɴᴅᴇᴅ!** 𝐒ᴇɴᴅ /play ᴛᴏ ᴀᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs ᴀɴᴅ ᴋᴇᴇᴘ ᴛʜᴇ ᴍᴜsɪᴄ ɢᴏɪɴɢ.",
+                        "**🎵 𝐓ʜᴇ 𝐐ᴜᴇᴜᴇ 𝐇ᴀs 𝐅ɪɴɪsʜᴇᴅ. 𝐔sᴇ /play 𝐓ᴏ 𝐀ᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs!!**",
                         reply_markup=buttons,
                     )
                 except:
@@ -359,20 +357,18 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ ✙",
+                                    "✙ ʌᴅᴅ ϻє вᴧʙʏ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
-                            ],
-                            [
                                 InlineKeyboardButton(
-                                    "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
+                                    "⋞ ᴄʟᴏsє ⋟", callback_data="close_message"
                                 ),
-                            ],
+                            ]
                         ]
                     )
                     await app.send_message(
                         chat_id,
-                        "🎶 𝐐ᴜᴇᴜᴇ 𝐄ɴᴅᴇᴅ! 𝐒ᴇɴᴅ /play ᴛᴏ ᴀᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs ᴀɴᴅ ᴋᴇᴇᴘ ᴛʜᴇ ᴍᴜsɪᴄ ɢᴏɪɴɢ.",
+                        "🎵 𝐓ʜᴇ 𝐐ᴜᴇᴜᴇ 𝐇ᴀs 𝐅ɪɴɪsʜᴇᴅ. 𝐔sᴇ /play 𝐓ᴏ 𝐀ᴅᴅ 𝐌ᴏʀᴇ 𝐒ᴏɴɢs!!",
                         reply_markup=buttons,
                     )
                 except:
