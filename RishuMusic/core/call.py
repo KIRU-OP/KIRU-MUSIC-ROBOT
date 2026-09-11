@@ -332,13 +332,15 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ✙",
+                                    "✙ ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
+                            ],
+                            [
                                 InlineKeyboardButton(
                                     "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
                                 ),
-                            ]
+                            ],
                         ]
                     )
                     await app.send_message(
@@ -357,13 +359,15 @@ class Call(PyTgCalls):
                         [
                             [
                                 InlineKeyboardButton(
-                                    "✙ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ✙",
+                                    "✙ ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ ✙",
                                     url=f"https://t.me/{app.username}?startgroup=true",
                                 ),
+                            ],
+                            [
                                 InlineKeyboardButton(
                                     "⋞ ᴄʟᴏsᴇ ⋟", callback_data="close_message"
                                 ),
-                            ]
+                            ],
                         ]
                     )
                     await app.send_message(
