@@ -925,22 +925,38 @@ async def download_video(link: str) -> str:
 #   2. Append it to AUDIO_STREAM_SOURCES.
 # Nothing else in the file needs to change.
 
-async def _validate_stream_url(url: str, timeout: float = 6.0) -> bool:
+async def _validate_stream_url(url: str, timeout: float = 6.0, label: str = "") -> bool:
     """
     Quick liveness check for a candidate stream URL before handing it to the
     player. Uses a tiny ranged GET (some CDNs ignore/block HEAD) so it never
     downloads the actual file — it only confirms the endpoint is alive and
     responds with a success status. Keeps the whole chain fast-failing so a
     dead API doesn't stall playback.
+
+    `label` (e.g. "primary_api") is only used to make failure log lines
+    identifiable — it has no effect on behavior. Every failure path now
+    logs *why* it failed (status code, timeout, or exception) instead of
+    silently returning False, so a dead/erroring API leaves a trail instead
+    of just showing up as "All audio stream sources failed" downstream.
     """
+    tag = f"[{label}] " if label else ""
     try:
         session = await _get_yt_session()
         headers = {"Range": "bytes=0-1"}
         async with session.get(
             url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)
         ) as resp:
-            return resp.status in (200, 206)
-    except Exception:
+            if resp.status in (200, 206):
+                return True
+            _module_logger.info(
+                f"❌ {tag}stream validation failed — HTTP {resp.status} for {url}"
+            )
+            return False
+    except asyncio.TimeoutError:
+        _module_logger.info(f"❌ {tag}stream validation timed out ({timeout}s) for {url}")
+        return False
+    except Exception as e:
+        _module_logger.info(f"❌ {tag}stream validation errored — {type(e).__name__}: {e} for {url}")
         return False
 
 
@@ -978,7 +994,7 @@ async def _stream_url_primary_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{PRIMARY_API_URL}/download?url={video_id}&type=audio&api_key={SHRUTI_API_KEY}"
-    return url if await _validate_stream_url(url) else None
+    return url if await _validate_stream_url(url, label="primary_api") else None
 
 
 async def _stream_url_worker_api(link: str) -> Optional[str]:
@@ -989,7 +1005,7 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{WORKER_FALLBACK_API_URL}/download?url={video_id}&type=audio&key={WORKER_FALLBACK_API_KEY}"
-    return url if await _validate_stream_url(url) else None
+    return url if await _validate_stream_url(url, label="worker_api") else None
 
 
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
