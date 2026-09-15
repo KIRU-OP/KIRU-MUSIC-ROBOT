@@ -20,16 +20,16 @@ import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
-from RishuMusic.utils.cookie_handler import COOKIE_PATH
-from RishuMusic.utils.database import is_on_off
-from RishuMusic.utils.errors import capture_internal_err
-from RishuMusic.utils.formatters import time_to_seconds
-from RishuMusic.utils.tuning import (
+from VIPMUSIC.utils.cookie_handler import COOKIE_PATH
+from VIPMUSIC.utils.database import is_on_off
+from VIPMUSIC.utils.errors import capture_internal_err
+from VIPMUSIC.utils.formatters import time_to_seconds
+from VIPMUSIC.utils.tuning import (
     YTDLP_TIMEOUT,
     YOUTUBE_META_MAX,
     YOUTUBE_META_TTL,
 )
-from RishuMusic import LOGGER
+from VIPMUSIC import LOGGER
 
 _module_logger = LOGGER(__name__)
 
@@ -925,38 +925,22 @@ async def download_video(link: str) -> str:
 #   2. Append it to AUDIO_STREAM_SOURCES.
 # Nothing else in the file needs to change.
 
-async def _validate_stream_url(url: str, timeout: float = 6.0, label: str = "") -> bool:
+async def _validate_stream_url(url: str, timeout: float = 6.0) -> bool:
     """
     Quick liveness check for a candidate stream URL before handing it to the
     player. Uses a tiny ranged GET (some CDNs ignore/block HEAD) so it never
     downloads the actual file — it only confirms the endpoint is alive and
     responds with a success status. Keeps the whole chain fast-failing so a
     dead API doesn't stall playback.
-
-    `label` (e.g. "primary_api") is only used to make failure log lines
-    identifiable — it has no effect on behavior. Every failure path now
-    logs *why* it failed (status code, timeout, or exception) instead of
-    silently returning False, so a dead/erroring API leaves a trail instead
-    of just showing up as "All audio stream sources failed" downstream.
     """
-    tag = f"[{label}] " if label else ""
     try:
         session = await _get_yt_session()
         headers = {"Range": "bytes=0-1"}
         async with session.get(
             url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)
         ) as resp:
-            if resp.status in (200, 206):
-                return True
-            _module_logger.info(
-                f"❌ {tag}stream validation failed — HTTP {resp.status} for {url}"
-            )
-            return False
-    except asyncio.TimeoutError:
-        _module_logger.info(f"❌ {tag}stream validation timed out ({timeout}s) for {url}")
-        return False
-    except Exception as e:
-        _module_logger.info(f"❌ {tag}stream validation errored — {type(e).__name__}: {e} for {url}")
+            return resp.status in (200, 206)
+    except Exception:
         return False
 
 
@@ -994,7 +978,7 @@ async def _stream_url_primary_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{PRIMARY_API_URL}/download?url={video_id}&type=audio&api_key={SHRUTI_API_KEY}"
-    return url if await _validate_stream_url(url, label="primary_api") else None
+    return url if await _validate_stream_url(url) else None
 
 
 async def _stream_url_worker_api(link: str) -> Optional[str]:
@@ -1005,7 +989,7 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
     if not video_id or len(video_id) < 3:
         return None
     url = f"{WORKER_FALLBACK_API_URL}/download?url={video_id}&type=audio&key={WORKER_FALLBACK_API_KEY}"
-    return url if await _validate_stream_url(url, label="worker_api") else None
+    return url if await _validate_stream_url(url) else None
 
 
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
