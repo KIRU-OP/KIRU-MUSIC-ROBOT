@@ -58,7 +58,7 @@ _UA = (
 )
 
 # ============ API CONFIGURATION (Youtube.py jaisi hi, taaki dono consistent rahein) ============
-SHRUTI_API_KEY = os.environ.get("SHRUTI_API_KEY", "ShrutiBotsPAVXJFsXdDeoJqDOe4NW")
+SHRUTI_API_KEY = os.environ.get("SHRUTI_API_KEY", "ShrutiBotspGmExB4FMvFKFNcm5Zhl")
 
 PRIMARY_API_URL = os.environ.get("PRIMARY_API_URL", "https://api.shrutibots.site")
 # /download?url={video_id}&type=audio|video&api_key={KEY} -> direct file
