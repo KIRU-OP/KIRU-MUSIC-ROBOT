@@ -40,6 +40,7 @@ _formats_lock = asyncio.Lock()
 
 # ============ API CONFIGURATION ============
 SHRUTI_API_KEY = "ShrutiBotspGmExB4FMvFKFNcm5Zhl"
+VISHAL_API_KEY = "ArtistbotshAUfCkB"
 
 # YouTube Data API v3 (official) — used for all search/metadata lookups.
 # Replaces the old youtubesearchpython scraper, which broke silently whenever
@@ -97,10 +98,16 @@ WORKER_FALLBACK_API_KEY = os.environ.get("WORKER_FALLBACK_API_KEY", "itsmesid")
 # Endpoint: /download?url={video_id}&type=audio&key={KEY}
 # Response: Direct file download
 
+# API 4: Vishal API (Direct Download, Cloudflare Worker)
+VISHAL_API_URL = os.environ.get("VISHAL_API_URL", "https://music.artistbots.workers.dev")
+# Endpoint: /download?url={video_id}&type=audio&api_key={KEY}
+# Response: Direct file download
+
 # API URLs loaded status
 PRIMARY_API_LOADED = False
 FALLBACK_API_LOADED = False
 WORKER_FALLBACK_API_LOADED = False
+VISHAL_API_LOADED = False
 
 # ============ DOWNLOAD CACHE MANAGEMENT (prevents "No space left on device") ============
 # Root cause of the disk-full crashes: every downloaded file in downloads/ was
@@ -337,7 +344,7 @@ async def _get_yt_session() -> aiohttp.ClientSession:
 
 async def load_apis():
     """Load and verify APIs - only checks non-empty URLs."""
-    global PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED
+    global PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED, VISHAL_API_LOADED
     logger = LOGGER("VISHALMUSIC.platforms.Youtube.py")
 
     # Log key-pool size on startup so "search stopped working" is easy to
@@ -382,7 +389,19 @@ async def load_apis():
         except Exception as e:
             logger.warning(f"[WARN] Worker Fallback API unreachable: {e}")
 
-    return PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED
+    if VISHAL_API_URL:
+        try:
+            session = await _get_yt_session()
+            async with session.get(f"{VISHAL_API_URL}/", timeout=aiohttp.ClientTimeout(total=8)) as response:
+                if response.status == 200:
+                    VISHAL_API_LOADED = True
+                    logger.info(f"[OK] VISHAL API loaded: {VISHAL_API_URL}")
+                else:
+                    logger.warning(f"[WARN] Vishal API status {response.status}")
+        except Exception as e:
+            logger.warning(f"[WARN] Vishal API unreachable: {e}")
+
+    return PRIMARY_API_LOADED, FALLBACK_API_LOADED, WORKER_FALLBACK_API_LOADED, VISHAL_API_LOADED
 
 # Initialize APIs + start background cache cleanup on startup
 try:
@@ -685,6 +704,81 @@ async def download_song_worker_api(link: str) -> str:
             f"{WORKER_FALLBACK_API_URL}/download",
             params=params,
             timeout=aiohttp.ClientTimeout(total=120),
+        ) as response:
+            if response.status != 200:
+                return None
+            async with aiofiles.open(file_path, "wb") as f:
+                async for chunk in response.content.iter_chunked(1 << 20):  # 1 MB
+                    await f.write(chunk)
+
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            return file_path
+        return None
+    except Exception:
+        return None
+
+
+# ============ API 4: VISHAL API (DIRECT DOWNLOAD, CLOUDFLARE WORKER) ============
+async def download_song_vishal_api(link: str) -> str:
+    """Vishal API - Direct download with API key (shared session, 1 MB chunks)."""
+    if not VISHAL_API_URL:
+        return None
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+
+    DOWNLOAD_DIR = "downloads"
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return file_path
+
+    try:
+        await _ensure_disk_space()
+        session = await _get_yt_session()
+        params = {"url": video_id, "type": "audio", "api_key": VISHAL_API_KEY}
+        async with session.get(
+            f"{VISHAL_API_URL}/download",
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as response:
+            if response.status != 200:
+                return None
+            async with aiofiles.open(file_path, "wb") as f:
+                async for chunk in response.content.iter_chunked(1 << 20):  # 1 MB
+                    await f.write(chunk)
+
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            return file_path
+        return None
+    except Exception:
+        return None
+
+
+async def download_video_vishal_api(link: str) -> str:
+    """Vishal API - Video download with API key (shared session, 1 MB chunks)."""
+    if not VISHAL_API_URL:
+        return None
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+
+    DOWNLOAD_DIR = "downloads"
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
+
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return file_path
+
+    try:
+        await _ensure_disk_space()
+        session = await _get_yt_session()
+        params = {"url": video_id, "type": "video", "api_key": VISHAL_API_KEY}
+        async with session.get(
+            f"{VISHAL_API_URL}/download",
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=180),
         ) as response:
             if response.status != 200:
                 return None
@@ -1040,12 +1134,26 @@ async def _stream_url_worker_api(link: str) -> Optional[str]:
     return url if await _validate_stream_url(url) else None
 
 
+async def _stream_url_vishal_api(link: str) -> Optional[str]:
+    """Vishal API's own endpoint used directly as the stream URL — the player
+    pulls straight from the API's CDN instead of us downloading first.
+    Only validated (ranged GET), never fully fetched here."""
+    if not VISHAL_API_URL:
+        return None
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    if not video_id or len(video_id) < 3:
+        return None
+    url = f"{VISHAL_API_URL}/download?url={video_id}&type=audio&api_key={VISHAL_API_KEY}"
+    return url if await _validate_stream_url(url) else None
+
+
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
 # out of this chain — it requires a custom `X-Download-Token` header, which a
 # plain stream URL can't carry, so it can't be handed to a player as-is.
 AUDIO_STREAM_SOURCES = [
     _stream_url_ytdlp,
     _stream_url_primary_api,
+    _stream_url_vishal_api,
     _stream_url_worker_api,
 ]
 
