@@ -1150,8 +1150,11 @@ async def _stream_url_vishal_api(link: str) -> Optional[str]:
 # NOTE: the token-based Fallback API (FALLBACK_API_URL) is intentionally left
 # out of this chain — it requires a custom `X-Download-Token` header, which a
 # plain stream URL can't carry, so it can't be handed to a player as-is.
+#
+# NOTE: _stream_url_ytdlp (cookies-based YouTube scraping) is intentionally
+# NOT in this chain anymore — audio must come only from the API sources
+# below, never via yt-dlp/cookies.
 AUDIO_STREAM_SOURCES = [
-    _stream_url_ytdlp,
     _stream_url_primary_api,
     _stream_url_vishal_api,
     _stream_url_worker_api,
