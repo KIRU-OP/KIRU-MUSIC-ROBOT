@@ -396,13 +396,61 @@ try:
 except RuntimeError:
     pass
 
-def _cookiefile_path() -> Optional[str]:
-    path = str(COOKIE_PATH)
+def _is_valid_cookie_file(path: str) -> bool:
+    """
+    Sanity-checks a Netscape-format cookies.txt so an empty, corrupted,
+    or clearly-broken file isn't silently handed to yt-dlp (which is what
+    was causing the bot-check to fire even though a cookies.txt existed
+    on disk — the old check only tested existence, not content).
+    """
     try:
-        if path and os.path.exists(path) and os.path.getsize(path) > 0:
-            return path
+        if not path or not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return False
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
     except Exception:
-        pass
+        return False
+
+    has_header = content.lstrip().startswith(("# Netscape HTTP Cookie File", "# HTTP Cookie File"))
+    has_youtube_line = any(
+        ("youtube.com" in line) and line.count("\t") >= 5
+        for line in content.splitlines()
+        if line and not line.startswith("#")
+    )
+    return has_header or has_youtube_line
+
+
+def _all_cookie_files() -> List[str]:
+    """
+    Any additional cookies*.txt files placed next to COOKIE_PATH (e.g.
+    cookies1.txt, cookies2.txt from different accounts) are picked up
+    automatically, so one expired account doesn't take the whole bot down.
+    """
+    import glob
+    cookie_dir = os.path.dirname(str(COOKIE_PATH)) or "."
+    candidates = sorted(glob.glob(os.path.join(cookie_dir, "*.txt")))
+    return [c for c in candidates if _is_valid_cookie_file(c)]
+
+
+def _cookiefile_path() -> Optional[str]:
+    valid_files = _all_cookie_files()
+    if valid_files:
+        import random
+        return random.choice(valid_files)
+
+    path = str(COOKIE_PATH)
+    if os.path.isfile(path):
+        _module_logger.warning(
+            "cookies.txt exists but failed validation (empty, corrupted, "
+            "or wrong format) — skipping --cookies. Re-export it in "
+            "Netscape format from a logged-in YouTube session."
+        )
+    else:
+        _module_logger.warning(
+            "No valid cookies.txt found at %s — YouTube bot-check will "
+            "likely trigger. Export fresh cookies and place them there.",
+            path,
+        )
     return None
 
 def _cookies_args() -> List[str]:
