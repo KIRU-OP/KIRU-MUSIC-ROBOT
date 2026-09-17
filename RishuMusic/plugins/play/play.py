@@ -23,6 +23,9 @@ from RishuMusic.utils.inline import (
 )
 from RishuMusic.utils.logger import play_logs
 from RishuMusic.utils.stream.stream import stream
+from RishuMusic.utils.thumbnails import get_thumb  # ⚠️ adjust this path if your
+# get_thumb() function actually lives somewhere else (e.g.
+# RishuMusic.utils.thumbnail, RishuMusic.plugins.tools.thumbnail, etc.)
 from config import BANNED_USERS, lyrical
 
 
@@ -180,7 +183,10 @@ async def play_commnd(
                 except:
                     return await mystic.edit_text(_["play_3"])
                 streamtype = "youtube"
-                img = details["thumb"]
+                # Was: img = details["thumb"] (raw YouTube thumbnail URL, no
+                # custom banner ever generated). Now build the custom banner
+                # and fall back to the raw URL only if generation fails.
+                img = await get_thumb(track_id, user_id)
                 cap = _["play_10"].format(
                     details["title"],
                     details["duration_min"],
@@ -333,6 +339,7 @@ async def play_commnd(
         except:
             return await mystic.edit_text(_["play_3"])
         streamtype = "youtube"
+        img = await get_thumb(track_id, user_id)
     if str(playmode) == "Direct":
         if not plist_type:
             if details["duration_min"]:
@@ -411,7 +418,7 @@ async def play_commnd(
                 )
                 await mystic.delete()
                 await message.reply_photo(
-                    photo=details["thumb"],
+                    photo=img,
                     caption=_["play_10"].format(
                         details["title"].title(),
                         details["duration_min"],
@@ -634,8 +641,9 @@ async def slider_queries(client, CallbackQuery, _):
             pass
         title, duration_min, thumbnail, vidid = await YouTube.slider(query, query_type)
         buttons = slider_markup(_, vidid, user_id, query, query_type, cplay, fplay)
+        img = await get_thumb(vidid, user_id)
         med = InputMediaPhoto(
-            media=thumbnail,
+            media=img,
             caption=_["play_10"].format(
                 title.title(),
                 duration_min,
@@ -655,8 +663,9 @@ async def slider_queries(client, CallbackQuery, _):
             pass
         title, duration_min, thumbnail, vidid = await YouTube.slider(query, query_type)
         buttons = slider_markup(_, vidid, user_id, query, query_type, cplay, fplay)
+        img = await get_thumb(vidid, user_id)
         med = InputMediaPhoto(
-            media=thumbnail,
+            media=img,
             caption=_["play_10"].format(
                 title.title(),
                 duration_min,
