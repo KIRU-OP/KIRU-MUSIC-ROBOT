@@ -20,8 +20,8 @@ from RishuMusic.utils.database import (add_active_chat, add_active_video_chat,
 from RishuMusic.utils.exceptions import AssistantErr
 from RishuMusic.utils.formatters import check_duration, seconds_to_min, speed_converter
 from RishuMusic.utils.inline.play import stream_markup
-from RishuMusic.utils.stream.autoplay import toggle_autoplay
 from RishuMusic.utils.stream.autoclear import auto_clean
+from RishuMusic.utils.stream.autoplay import is_autoplay_on, auto_play_next
 from RishuMusic.utils.thumbnails import get_thumb
 from strings import get_string
 
@@ -314,6 +314,41 @@ class Call(PyTgCalls):
                 autoend[chat_id] = datetime.now() + timedelta(minutes=1)
 
   
+    async def _autoplay_or_leave(
+        self, client: PyTgCalls, chat_id: int, popped: Union[dict, None]
+    ) -> bool:
+        """
+        Called right when the queue for chat_id has just gone empty.
+        If autoplay is ON for this chat, tries to start the next similar
+        song via auto_play_next(). Returns True if a song was started
+        (caller should NOT clear/leave), False if the caller should fall
+        back to its normal "queue ended -> leave call" behaviour.
+        """
+        try:
+            if not await is_autoplay_on(chat_id):
+                return False
+        except Exception:
+            return False
+
+        popped = popped or {}
+        original_chat_id = popped.get("chat_id", chat_id)
+        last_title = popped.get("title", "")
+        last_vidid = popped.get("vidid", "")
+        video = str(popped.get("streamtype", "")) == "video"
+
+        try:
+            return bool(
+                await auto_play_next(
+                    chat_id,
+                    original_chat_id,
+                    last_title=last_title,
+                    last_vidid=last_vidid,
+                    video=video,
+                )
+            )
+        except Exception:
+            return False
+
     async def change_stream(self, client: PyTgCalls, chat_id: int):
         await delete_old_message(chat_id)
         check = db.get(chat_id)
@@ -327,6 +362,8 @@ class Call(PyTgCalls):
                 await set_loop(chat_id, loop)
             await auto_clean(popped)
             if not check:
+                if await self._autoplay_or_leave(client, chat_id, popped):
+                    return
                 await _clear_(chat_id)
                 try:
                     buttons = InlineKeyboardMarkup(
@@ -354,6 +391,8 @@ class Call(PyTgCalls):
                 return await client.leave_call(chat_id, close=False)
         except Exception:
             try:
+                if await self._autoplay_or_leave(client, chat_id, popped):
+                    return
                 await _clear_(chat_id)
                 try:
                     buttons = InlineKeyboardMarkup(
