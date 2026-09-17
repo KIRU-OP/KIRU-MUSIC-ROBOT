@@ -1218,7 +1218,7 @@ async def auto_play_next(
             chat_title = chat.title if chat.title else chat.first_name
         except Exception:
             chat_title = str(chat_id)
-        LOGGER.info(
+        LOGGER(__name__).info(
             "Autoplay — Chat: %s (%d) | Title: %s | Dur: %s | Video: %s",
             chat_title, chat_id,
             details.get('title', '—'),
