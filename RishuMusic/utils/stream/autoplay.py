@@ -1124,6 +1124,7 @@ async def auto_play_next(
                     f"[Autoplay-Debug] Failed to edit 'no song found' message: {e!r}"
                 )
             return False
+        new_title = details.get("title", "")
         new_artist = extract_artist(new_title) if new_title else ""
         await add_recent(chat_id, vidid, new_title, new_artist)
 
