@@ -10,7 +10,7 @@ from pyrogram.types import InlineKeyboardButton, CallbackQuery
 
 from RishuMusic import app  # apke bot ka app import
 from RishuMusic.utils.formatters import time_to_seconds
-from RishuMusic.core.call import autoplay as autoplay_module  # ⚠️ path check karo, comment neeche dekho
+from RishuMusic.utils.stream.autoplay import toggle_autoplay  # ⚠️ ISKA PATH CONFIRM KARNA HAI
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -227,7 +227,7 @@ async def toggle_autoplay_button(c: app, q: CallbackQuery):
         await q.answer("❌ Invalid request.", show_alert=True)
         return
 
-    new_status = await autoplay_module.toggle_autoplay(chat_id)
+    new_status = await toggle_autoplay(chat_id)
 
     if new_status:
         await q.answer("✅ ᴀᴜᴛᴏᴘʟᴀʏ ᴏɴ ᴋᴀʀ ᴅɪʏᴀ ɢᴀʏᴀ!", show_alert=True)
