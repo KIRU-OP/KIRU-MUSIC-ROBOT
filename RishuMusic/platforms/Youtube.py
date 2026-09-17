@@ -239,6 +239,116 @@ async def _v3_search(query: str, limit: int = 1) -> list:
     return await _ytdlp_search_fallback(query, limit=limit)
 
 
+async def _ytdlp_search_multi_fallback(query: str, limit: int = 5) -> list:
+    """
+    Quota-free multi-result fallback for youtube_search_multi, used only
+    when the YOUTUBE_API_KEYS pool is exhausted or none are configured.
+    """
+    def _run():
+        ytdl_opts = {"quiet": True, "extract_flat": "in_playlist", "skip_download": True}
+        with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+            return info.get("entries") or []
+
+    loop = asyncio.get_event_loop()
+    entries = await loop.run_in_executor(None, _run)
+
+    results = []
+    for e in entries:
+        if not e:
+            continue
+        vid = e.get("id")
+        if not vid:
+            continue
+        dur_sec = int(e.get("duration") or 0)
+        thumb_list = e.get("thumbnails") or []
+        thumb_url = (
+            thumb_list[-1].get("url", "")
+            if thumb_list else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+        )
+        results.append(
+            {
+                "id": vid,
+                "title": e.get("title") or "Unknown",
+                "duration": _seconds_to_min_str(dur_sec),
+                "duration_sec": dur_sec,
+                "channel": e.get("channel") or e.get("uploader") or "",
+                "thumbnails": [{"url": thumb_url}] if thumb_url else [],
+                "thumbnail": thumb_url,
+                "link": f"https://www.youtube.com/watch?v={vid}",
+            }
+        )
+    return results
+
+
+async def youtube_search_multi(query: str, limit: int = 5) -> list:
+    """
+    Search YouTube and return up to `limit` normalized results, used by
+    RishuMusic.utils.stream.autoplay for picking the next similar song.
+
+    Each result dict has: id, title, duration (m:ss string), duration_sec,
+    channel (string), thumbnails (list of {"url": ...}), thumbnail
+    (string, same url), link. This shape matches what autoplay.py's
+    get_best_song() and its fallback loop read via .get(...).
+
+    Uses the same YOUTUBE_API_KEYS pool / key rotation as _v3_search, and
+    falls back to a quota-free yt-dlp search if every key is exhausted or
+    none are configured.
+    """
+    if not query:
+        return []
+
+    async with aiohttp.ClientSession() as session:
+        search_data = await _v3_get(
+            session,
+            "search",
+            {"part": "snippet", "q": query, "type": "video", "maxResults": limit},
+        )
+        if search_data and search_data.get("items"):
+            ids = [
+                it["id"]["videoId"]
+                for it in search_data["items"]
+                if it.get("id", {}).get("videoId")
+            ]
+            if ids:
+                details_data = await _v3_get(
+                    session,
+                    "videos",
+                    {"part": "snippet,contentDetails", "id": ",".join(ids)},
+                )
+                if details_data and details_data.get("items"):
+                    results = []
+                    for item in details_data["items"]:
+                        snippet = item["snippet"]
+                        secs = _iso8601_duration_to_seconds(
+                            item["contentDetails"]["duration"]
+                        )
+                        thumbs = snippet.get("thumbnails", {}) or {}
+                        thumb_url = (
+                            thumbs.get("high", {}).get("url")
+                            or thumbs.get("medium", {}).get("url")
+                            or thumbs.get("default", {}).get("url", "")
+                        )
+                        if thumb_url:
+                            thumb_url = thumb_url.split("?")[0]
+                        results.append(
+                            {
+                                "id": item["id"],
+                                "title": snippet.get("title", "Unknown"),
+                                "duration": _seconds_to_min_str(secs),
+                                "duration_sec": secs,
+                                "channel": snippet.get("channelTitle", ""),
+                                "thumbnails": [{"url": thumb_url}] if thumb_url else [],
+                                "thumbnail": thumb_url,
+                                "link": f"https://www.youtube.com/watch?v={item['id']}",
+                            }
+                        )
+                    return results
+
+    # Every key exhausted, none configured, or the API call failed outright.
+    return await _ytdlp_search_multi_fallback(query, limit=limit)
+
+
 async def download_song(link: str) -> str:
     video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
     if not video_id or len(video_id) < 3:
