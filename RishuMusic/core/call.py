@@ -324,10 +324,14 @@ class Call(PyTgCalls):
         (caller should NOT clear/leave), False if the caller should fall
         back to its normal "queue ended -> leave call" behaviour.
         """
+        LOGGER(__name__).info(f"[Autoplay-Debug] _autoplay_or_leave called for chat {chat_id}")
         try:
-            if not await is_autoplay_on(chat_id):
+            on = await is_autoplay_on(chat_id)
+            LOGGER(__name__).info(f"[Autoplay-Debug] is_autoplay_on({chat_id}) = {on}")
+            if not on:
                 return False
-        except Exception:
+        except Exception as e:
+            LOGGER(__name__).info(f"[Autoplay-Debug] is_autoplay_on raised: {e!r}")
             return False
 
         popped = popped or {}
@@ -335,9 +339,14 @@ class Call(PyTgCalls):
         last_title = popped.get("title", "")
         last_vidid = popped.get("vidid", "")
         video = str(popped.get("streamtype", "")) == "video"
+        LOGGER(__name__).info(
+            f"[Autoplay-Debug] calling auto_play_next(chat_id={chat_id}, "
+            f"original_chat_id={original_chat_id}, last_title={last_title!r}, "
+            f"last_vidid={last_vidid!r}, video={video})"
+        )
 
         try:
-            return bool(
+            result = bool(
                 await auto_play_next(
                     chat_id,
                     original_chat_id,
@@ -346,7 +355,10 @@ class Call(PyTgCalls):
                     video=video,
                 )
             )
-        except Exception:
+            LOGGER(__name__).info(f"[Autoplay-Debug] auto_play_next returned {result}")
+            return result
+        except Exception as e:
+            LOGGER(__name__).info(f"[Autoplay-Debug] auto_play_next raised: {e!r}")
             return False
 
     async def change_stream(self, client: PyTgCalls, chat_id: int):
