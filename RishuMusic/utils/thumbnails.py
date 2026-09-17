@@ -167,5 +167,11 @@ async def get_thumb(videoid, user_id):
 
         background.save(cache_path, format="PNG", optimize=True)
         return cache_path
-    except Exception:
+    except Exception as e:
+        # DEBUG: previously this swallowed every error silently, so it
+        # always fell back to YOUTUBE_IMG_URL with no way to know why.
+        # Print/log the real error so the actual failure point is visible.
+        import traceback
+        print(f"[get_thumb] Failed to generate custom thumbnail: {e}")
+        traceback.print_exc()
         return YOUTUBE_IMG_URL
