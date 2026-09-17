@@ -1,9 +1,21 @@
 import math
+import sys
+import platform
+from time import time
+from datetime import datetime
 
-from pyrogram.types import InlineKeyboardButton
+import pyrogram
+from pyrogram import filters
+from pyrogram.types import InlineKeyboardButton, CallbackQuery
 
+from RishuMusic import app  # apke bot ka app import
 from RishuMusic.utils.formatters import time_to_seconds
+from RishuMusic.core.call import autoplay as autoplay_module  # ⚠️ path check karo, comment neeche dekho
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  BUTTON MARKUPS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def track_markup(_, videoid, user_id, channel, fplay):
     buttons = [
@@ -63,11 +75,14 @@ def stream_markup_timer(_, chat_id, played, dur):
             InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
             InlineKeyboardButton(text="ʏᴛ-ᴀᴘɪ", callback_data=f"oapi"),
             InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}")],
- 
+
        [   InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
             InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
             InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
          ],
+        [
+            InlineKeyboardButton(text="🔁 ᴀᴜᴛᴏᴘʟᴀʏ", callback_data=f"ADMIN Autoplay|{chat_id}"),
+        ],
         [InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data="close")],
     ]
     return buttons
@@ -80,11 +95,14 @@ def stream_markup(_, chat_id):
             InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
             InlineKeyboardButton(text="ʏᴛ-ᴀᴘɪ", callback_data=f"oapi"),
             InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}")],
- 
+
        [   InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
             InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
             InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
          ],
+        [
+            InlineKeyboardButton(text="🔁 ᴀᴜᴛᴏᴘʟᴀʏ", callback_data=f"ADMIN Autoplay|{chat_id}"),
+        ],
         [InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data="close")],
     ]
     return buttons
@@ -161,17 +179,9 @@ def slider_markup(_, videoid, user_id, query, query_type, channel, fplay):
     return buttons
 
 
-
-
-
-import sys
-import platform
-from time import time
-from datetime import datetime
-import pyrogram
-from pyrogram import filters
-from pyrogram.types import CallbackQuery
-from RishuMusic import app  # apke bot ka app import
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  CALLBACK HANDLERS (ᴀᴘɪ sᴛᴀᴛᴜs + ᴀᴜᴛᴏᴘʟᴀʏ ᴛᴏɢɢʟᴇ)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # Pyrogram version
 pver = pyrogram.__version__
@@ -206,3 +216,20 @@ async def show_bot_info(c: app, q: CallbackQuery):
 """
 
     await q.answer(short_txt.strip(), show_alert=True)
+
+
+@app.on_callback_query(filters.regex(r"^ADMIN Autoplay\|"))
+async def toggle_autoplay_button(c: app, q: CallbackQuery):
+    # callback_data looks like: "ADMIN Autoplay|<chat_id>"
+    try:
+        chat_id = int(q.data.split("|")[1])
+    except (IndexError, ValueError):
+        await q.answer("❌ Invalid request.", show_alert=True)
+        return
+
+    new_status = await autoplay_module.toggle_autoplay(chat_id)
+
+    if new_status:
+        await q.answer("✅ ᴀᴜᴛᴏᴘʟᴀʏ ᴏɴ ᴋᴀʀ ᴅɪʏᴀ ɢᴀʏᴀ!", show_alert=True)
+    else:
+        await q.answer("🚫 ᴀᴜᴛᴏᴘʟᴀʏ ᴏғғ ᴋᴀʀ ᴅɪʏᴀ ɢᴀʏᴀ!", show_alert=True)
