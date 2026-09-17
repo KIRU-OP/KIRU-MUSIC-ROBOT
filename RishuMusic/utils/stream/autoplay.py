@@ -993,10 +993,17 @@ async def auto_play_next(
 
         indian_emoji = get_indian_emoji()
 
+        fetching_text = _.get("autoplay_6", "Fetching next track...")
+        if "autoplay_6" not in _:
+            LOGGER(__name__).info(
+                f"[Autoplay-Debug] Missing 'autoplay_6' key in language "
+                f"'{language}' strings — using fallback text instead."
+            )
+
         try:
             msg = await app.send_message(
                 original_chat_id,
-                f"{indian_emoji} {_['autoplay_6']}",
+                f"{indian_emoji} {fetching_text}",
             )
         except Exception as e:
             LOGGER(__name__).info(
