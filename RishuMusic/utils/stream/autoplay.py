@@ -969,7 +969,13 @@ async def auto_play_next(
 
     try:
         data = await autoplay_db.find_one({"chat_id": chat_id})
+        LOGGER(__name__).info(
+            f"[Autoplay-Debug] autoplay_db doc for chat {chat_id}: {data}"
+        )
         if not data or not data.get("status"):
+            LOGGER(__name__).info(
+                f"[Autoplay-Debug] Aborting — status is OFF/missing for chat {chat_id}"
+            )
             return False
 
         # Mark current song as recent BEFORE searching (so it's never picked again)
@@ -992,7 +998,11 @@ async def auto_play_next(
                 original_chat_id,
                 f"{indian_emoji} {_['autoplay_6']}",
             )
-        except Exception:
+        except Exception as e:
+            LOGGER(__name__).info(
+                f"[Autoplay-Debug] Failed to send 'fetching' message to "
+                f"{original_chat_id}: {e!r}"
+            )
             return False
 
         if not last_title:
@@ -1012,6 +1022,10 @@ async def auto_play_next(
 
         vidid, details = await get_best_song(
             chat_id, queries, last_title, last_vidid, artist, movie, mood, lang
+        )
+        LOGGER(__name__).info(
+            f"[Autoplay-Debug] get_best_song for chat {chat_id} -> vidid={vidid!r} "
+            f"(queries tried: {queries})"
         )
 
         # Fallback chain — applies ALL the same hard filters (devotional, lang,
@@ -1092,13 +1106,17 @@ async def auto_play_next(
                     continue
 
         if not vidid:
+            LOGGER(__name__).info(
+                f"[Autoplay-Debug] No song found at all (primary + fallback) "
+                f"for chat {chat_id}, lang={lang}"
+            )
             try:
                 await msg.edit_text("❌ ɴᴏ ꜱᴏɴɢ ꜰᴏᴜɴᴅ")
-            except Exception:
-                pass
+            except Exception as e:
+                LOGGER(__name__).info(
+                    f"[Autoplay-Debug] Failed to edit 'no song found' message: {e!r}"
+                )
             return False
-
-        new_title = details.get("title", "") if details else ""
         new_artist = extract_artist(new_title) if new_title else ""
         await add_recent(chat_id, vidid, new_title, new_artist)
 
@@ -1218,7 +1236,12 @@ async def auto_play_next(
 
         return True
 
-    except Exception:
+    except Exception as e:
+        import traceback
+        LOGGER(__name__).info(
+            f"[Autoplay-Debug] auto_play_next CRASHED for chat {chat_id}: {e!r}\n"
+            f"{traceback.format_exc()}"
+        )
         return False
 
     finally:
