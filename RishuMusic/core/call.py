@@ -20,6 +20,7 @@ from RishuMusic.utils.database import (add_active_chat, add_active_video_chat,
 from RishuMusic.utils.exceptions import AssistantErr
 from RishuMusic.utils.formatters import check_duration, seconds_to_min, speed_converter
 from RishuMusic.utils.inline.play import stream_markup
+from RishuMusic.utils.stream.autoplay import toggle_autoplay
 from RishuMusic.utils.stream.autoclear import auto_clean
 from RishuMusic.utils.thumbnails import get_thumb
 from strings import get_string
