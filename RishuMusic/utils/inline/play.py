@@ -1,9 +1,25 @@
 import math
+import sys
+import platform
+from time import time
+from datetime import datetime
 
-from pyrogram.types import InlineKeyboardButton
+import pyrogram
+from pyrogram import filters
+from pyrogram.types import CallbackQuery, InlineKeyboardButton
 
+from RishuMusic import app
 from RishuMusic.utils.formatters import time_to_seconds
 
+# NOTE: adjust this import path to match where `Anony = Call()` actually
+# lives in your project (it was defined at the bottom of call.py).
+from RishuMusic.core.call import Anony
+from RishuMusic.utils.exceptions import AssistantErr
+
+
+# ============================================================
+# Inline keyboard / markup builders
+# ============================================================
 
 def track_markup(_, videoid, user_id, channel, fplay):
     buttons = [
@@ -62,16 +78,20 @@ def stream_markup_timer(_, chat_id, played, dur):
         [
             InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
             InlineKeyboardButton(text="ʏᴛ-ᴀᴘɪ", callback_data=f"oapi"),
-            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}")],
- 
-       [   InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
+            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
             InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
             InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
-         ],
+        ],
+        [
+            InlineKeyboardButton(text="5-", callback_data=f"ADMIN SeekBack|{chat_id}"),
+            InlineKeyboardButton(text="5+", callback_data=f"ADMIN SeekForward|{chat_id}"),
+        ],
         [InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data="close")],
     ]
     return buttons
-
 
 
 def stream_markup(_, chat_id):
@@ -79,12 +99,17 @@ def stream_markup(_, chat_id):
         [
             InlineKeyboardButton(text="▷", callback_data=f"ADMIN Resume|{chat_id}"),
             InlineKeyboardButton(text="ʏᴛ-ᴀᴘɪ", callback_data=f"oapi"),
-            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}")],
- 
-       [   InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
+            InlineKeyboardButton(text="II", callback_data=f"ADMIN Pause|{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="↻", callback_data=f"ADMIN Replay|{chat_id}"),
             InlineKeyboardButton(text="‣‣I", callback_data=f"ADMIN Skip|{chat_id}"),
             InlineKeyboardButton(text="▢", callback_data=f"ADMIN Stop|{chat_id}"),
-         ],
+        ],
+        [
+            InlineKeyboardButton(text="5-", callback_data=f"ADMIN SeekBack|{chat_id}"),
+            InlineKeyboardButton(text="5+", callback_data=f"ADMIN SeekForward|{chat_id}"),
+        ],
         [InlineKeyboardButton(text=_["CLOSE_BUTTON"], callback_data="close")],
     ]
     return buttons
@@ -161,23 +186,13 @@ def slider_markup(_, videoid, user_id, query, query_type, channel, fplay):
     return buttons
 
 
+# ============================================================
+# Callback query handlers
+# ============================================================
 
-
-
-import sys
-import platform
-from time import time
-from datetime import datetime
-import pyrogram
-from pyrogram import filters
-from pyrogram.types import CallbackQuery
-from RishuMusic import app  # apke bot ka app import
-
-# Pyrogram version
 pver = pyrogram.__version__
-
-# Bot start time (uptime ke liye)
 BOT_START_TIME = datetime.now()
+
 
 def get_uptime():
     uptime = datetime.now() - BOT_START_TIME
@@ -193,7 +208,6 @@ async def show_bot_info(c: app, q: CallbackQuery):
     delta_ping = (time() - start) * 1000
     await m.delete()
 
-    # Short popup text (under 200 chars)
     short_txt = f"""
 🧾ᴀᴘɪ sᴛᴀᴛᴜs
 
@@ -204,5 +218,28 @@ async def show_bot_info(c: app, q: CallbackQuery):
 
 ✅ ᴇᴠᴇʀʏᴛʜɪɴɢ ғɪɴᴇ
 """
-
     await q.answer(short_txt.strip(), show_alert=True)
+
+
+@app.on_callback_query(filters.regex(r"^ADMIN SeekBack\|"))
+async def seek_back_5s(c: app, q: CallbackQuery):
+    chat_id = int(q.data.split("|")[1])
+    try:
+        await Anony.seek_backward_stream(chat_id, 5)
+        await q.answer("⏪ Rewound 5 seconds.")
+    except AssistantErr as e:
+        await q.answer(str(e), show_alert=True)
+    except Exception:
+        await q.answer("Couldn't rewind — nothing playing or seek failed.", show_alert=True)
+
+
+@app.on_callback_query(filters.regex(r"^ADMIN SeekForward\|"))
+async def seek_forward_5s(c: app, q: CallbackQuery):
+    chat_id = int(q.data.split("|")[1])
+    try:
+        await Anony.seek_forward_stream(chat_id, 5)
+        await q.answer("⏩ Skipped ahead 5 seconds.")
+    except AssistantErr as e:
+        await q.answer(str(e), show_alert=True)
+    except Exception:
+        await q.answer("Couldn't skip ahead — nothing playing or seek failed.", show_alert=True)
