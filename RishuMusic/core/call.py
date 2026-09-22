@@ -96,7 +96,7 @@ class Call(PyTgCalls):
     ) -> types.MediaStream:
         return types.MediaStream(
             media_path=source,
-            audio_parameters=types.AudioQuality.HIGH,
+            audio_parameters=types.AudioQuality.STUDIO,
             video_parameters=types.VideoQuality.HD_720p,
             audio_flags=types.MediaStream.Flags.REQUIRED,
             video_flags=(
@@ -267,6 +267,45 @@ class Call(PyTgCalls):
             ffmpeg=ffmpeg,
         )
         await self._play_on_assistant(assistant, chat_id, stream)
+
+    async def _skip_seek(self, chat_id: int, offset: int):
+        """
+        Shared logic for skipping the current stream forward or
+        backward by `offset` seconds (negative offset = backward).
+        """
+        check = db.get(chat_id)
+        if not check:
+            raise AssistantErr("Nothing is currently playing.")
+
+        playing = check[0]
+        file_path = playing.get("speed_path") or playing.get("file")
+        if not file_path:
+            raise AssistantErr("Nothing is currently playing.")
+
+        total_seconds = int(playing.get("seconds", 0))
+        played = int(playing.get("played", 0))
+        new_position = played + offset
+
+        if new_position < 0:
+            raise AssistantErr("This is the beginning of the track.")
+        if total_seconds and new_position >= total_seconds - 1:
+            raise AssistantErr("This is almost the end of the track.")
+
+        duration = seconds_to_min(total_seconds)
+        mode = "video" if str(playing.get("streamtype")) == "video" else "audio"
+
+        await self.seek_stream(chat_id, file_path, new_position, duration, mode)
+
+        playing["played"] = new_position
+        return new_position
+
+    async def seek_forward_stream(self, chat_id: int, seconds: int = 5):
+        """Skip the current stream forward by `seconds` (default 5s)."""
+        return await self._skip_seek(chat_id, abs(int(seconds)))
+
+    async def seek_backward_stream(self, chat_id: int, seconds: int = 5):
+        """Rewind the current stream backward by `seconds` (default 5s)."""
+        return await self._skip_seek(chat_id, -abs(int(seconds)))
 
     
     async def stream_call(self, link):
